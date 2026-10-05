@@ -52,3 +52,10 @@ services:
       - "12345:12345"
     depends_on:
       - loki
+  kale-app:
+    build: ../app
+    container_name: kale-app
+    ports:
+      - "3001:3000"
+    volumes:
+      - ../app/logs:/app/logs
