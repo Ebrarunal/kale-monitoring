@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 5s # Her 5 saniyede bir veri topla
+
+scrape_configs:
+  # Sunucu metrikleri (Node Exporter)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # Kendi kendini izleme
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
