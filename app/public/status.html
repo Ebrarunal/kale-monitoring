@@ -1,0 +1,152 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistem Durumu | Kale Servis</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">İçeriğe geç</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/" aria-label="Kale Servis ana sayfa"><span class="brand-mark" aria-hidden="true">K</span> Kale <span class="brand-subtitle">Servis</span></a>
+      <nav aria-label="Ana menü">
+        <a href="/">Ana Sayfa</a>
+        <a href="/create.html">Talep Oluştur</a>
+        <a href="/status.html" aria-current="page">Sistem Durumu</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" class="container" tabindex="-1">
+    <section aria-labelledby="page-title">
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">SİSTEM TAKİBİ</p>
+          <h1 id="page-title">Sistem durumu</h1>
+          <p class="lead">Uygulama, API, veritabanı ve istek performansını görüntüleyin.</p>
+        </div>
+        <button id="refreshButton" class="button button-secondary" type="button">Durumu yenile</button>
+      </div>
+      <p id="healthMessage" class="message" role="status" aria-live="polite" aria-atomic="true">Sistem durumu kontrol ediliyor...</p>
+      <div id="healthCards" class="status-grid" aria-busy="true">
+        <article class="card status-card">
+          <h2>Uygulama</h2>
+          <p>Servis uygulamasının çalışma durumu</p>
+          <strong id="appStatus" class="badge">Kontrol ediliyor...</strong>
+        </article>
+        <article class="card status-card">
+          <h2>API</h2>
+          <p>Durum API'sine erişim</p>
+          <strong id="apiStatus" class="badge">Kontrol ediliyor...</strong>
+        </article>
+        <article class="card status-card">
+          <h2>Veritabanı</h2>
+          <p>MySQL bağlantısının durumu</p>
+          <strong id="dbStatus" class="badge">Kontrol ediliyor...</strong>
+        </article>
+        <article class="card status-card">
+          <h2>Çalışma süresi</h2>
+          <p>Uygulamanın başlatılmasından bu yana</p>
+          <strong id="uptime" class="uptime">—</strong>
+        </article>
+        <article class="card status-card">
+          <h2>İstek</h2>
+          <p>Uygulama çalıştığından beri alınan istekler</p>
+          <strong id="requests" class="uptime">—</strong>
+        </article>
+        <article class="card status-card">
+          <h2>Hata oranı</h2>
+          <p>HTTP 500 ve üzeri yanıtların tüm isteklere oranı</p>
+          <strong id="errorRate" class="uptime">—</strong>
+        </article>
+      </div>
+      <section class="card response-card" aria-labelledby="response-title">
+        <h2 id="response-title">Yanıt süresi</h2>
+        <div class="response-values">
+          <p>Son istek<strong id="currentResponseTime">—</strong></p>
+          <p>Ortalama<strong id="averageResponseTime">—</strong></p>
+        </div>
+      </section>
+      <p class="status-note">İstek sayısı, hata oranı ve yanıt süreleri uygulamanın yeniden başlatılmasından beri ölçülür. UP: Çalışıyor · DOWN: Çalışmıyor · DEGRADED: Kısmen çalışıyor.</p>
+    </section>
+  </main>
+  <script>
+    const refreshButton = document.getElementById('refreshButton');
+    function showStatus(id, value) {
+      const element = document.getElementById(id);
+      const styles = { UP: 'badge-up', DOWN: 'badge-down', DEGRADED: 'badge-degraded' };
+      element.className = `badge ${styles[value] || ''}`;
+      element.textContent = styles[value] ? value : 'Bilinmiyor';
+    }
+    function formatDuration(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '—';
+      const seconds = Math.floor(value);
+      if (seconds < 60) return `${seconds} sn`;
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return [days && `${days} gün`, hours && `${hours} sa`, `${minutes} dk`]
+        .filter(Boolean).join(' ');
+    }
+    function formatMilliseconds(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? `${value.toFixed(0)} ms` : '—';
+    }
+    async function checkHealth() {
+      if (refreshButton.disabled) return;
+      const message = document.getElementById('healthMessage');
+      const cards = document.getElementById('healthCards');
+      refreshButton.disabled = true;
+      refreshButton.textContent = 'Kontrol ediliyor...';
+      cards.setAttribute('aria-busy', 'true');
+      message.className = 'message';
+      message.textContent = 'Sistem durumu kontrol ediliyor...';
+      showStatus('appStatus', null);
+      showStatus('apiStatus', null);
+      showStatus('dbStatus', null);
+      ['uptime', 'requests', 'errorRate', 'currentResponseTime', 'averageResponseTime']
+        .forEach((id) => { document.getElementById(id).textContent = '—'; });
+      try {
+        const response = await fetch('/api/status', { cache: 'no-store' });
+        if (!response.ok && response.status !== 503) throw new Error('İstek başarısız.');
+        const data = await response.json();
+        const states = ['UP', 'DOWN', 'DEGRADED'];
+        if (!data || !states.includes(data.application) || !states.includes(data.api) ||
+          !states.includes(data.database)) {
+          throw new Error('Geçersiz durum cevabı.');
+        }
+        showStatus('appStatus', data.application);
+        showStatus('apiStatus', data.api);
+        showStatus('dbStatus', data.database);
+        document.getElementById('uptime').textContent = formatDuration(data.uptime);
+        document.getElementById('requests').textContent =
+          Number.isInteger(data.requests) ? data.requests.toLocaleString('tr-TR') : '—';
+        document.getElementById('errorRate').textContent =
+          typeof data.errorRate === 'number' && Number.isFinite(data.errorRate)
+            ? `%${data.errorRate.toFixed(1)}` : '—';
+        document.getElementById('currentResponseTime').textContent =
+          formatMilliseconds(data.responseTimeCurrentMs);
+        document.getElementById('averageResponseTime').textContent =
+          formatMilliseconds(data.responseTimeAverageMs);
+        const healthy = data.application === 'UP' && data.api === 'UP' && data.database === 'UP';
+        message.className = healthy ? 'message message-success' : 'message message-warning';
+        message.textContent = healthy ? 'Tüm sistemler çalışıyor.'
+          : `Sistemde hizmet sorunu var. Uygulama: ${data.application} · API: ${data.api} · Veritabanı: ${data.database}.`;
+      } catch (error) {
+        showStatus('appStatus', null);
+        showStatus('apiStatus', null);
+        showStatus('dbStatus', null);
+        message.className = 'message message-error';
+        message.textContent = 'Sistem durumuna şu anda ulaşılamıyor. Lütfen daha sonra yeniden deneyin.';
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = 'Durumu yenile';
+        cards.setAttribute('aria-busy', 'false');
+      }
+    }
+    refreshButton.addEventListener('click', checkHealth);
+    checkHealth();
+  </script>
+</body>
+</html>

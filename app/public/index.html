@@ -1,0 +1,96 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Son Talepler | Kale Servis</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">İçeriğe geç</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/" aria-label="Kale Servis ana sayfa"><span class="brand-mark" aria-hidden="true">K</span> Kale <span class="brand-subtitle">Servis</span></a>
+      <nav aria-label="Ana menü">
+        <a href="/" aria-current="page">Ana Sayfa</a>
+        <a href="/create.html">Talep Oluştur</a>
+        <a href="/status.html">Sistem Durumu</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" class="container" tabindex="-1">
+    <section aria-labelledby="page-title">
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">KALE SERVİS</p>
+          <h1 id="page-title">Size nasıl yardımcı olabiliriz?</h1>
+          <p class="lead">İhtiyacınıza uygun servis türünü seçerek talebinizi kolayca oluşturun.</p>
+        </div>
+        <a class="button" href="/create.html">Yeni talep oluştur <span aria-hidden="true">+</span></a>
+      </div>
+      <div class="service-grid" aria-label="Servis türleri">
+        <a class="card service-card" href="/create.html?type=Ak%C4%B1ll%C4%B1%20Kilit">
+          <span class="service-icon" aria-hidden="true">🔒</span>
+          <h2>Akıllı Kilit</h2>
+          <span class="service-link">Talep oluştur <span aria-hidden="true">→</span></span>
+        </a>
+        <a class="card service-card" href="/create.html?type=Kale%20Alarm">
+          <span class="service-icon" aria-hidden="true">◉</span>
+          <h2>Kale Alarm</h2>
+          <span class="service-link">Talep oluştur <span aria-hidden="true">→</span></span>
+        </a>
+        <a class="card service-card" href="/create.html?type=%C3%87ilingir">
+          <span class="service-icon" aria-hidden="true">🔑</span>
+          <h2>Çilingir</h2>
+          <span class="service-link">Talep oluştur <span aria-hidden="true">→</span></span>
+        </a>
+      </div>
+      <div class="section-heading"><h2>Talep listesi</h2><span class="muted">Son 10 talep</span></div>
+      <p id="listMessage" class="message" role="status" aria-live="polite">Yükleniyor...</p>
+      <div id="requestList" class="request-grid" aria-busy="true"></div>
+    </section>
+  </main>
+  <script>
+    async function loadRequests() {
+      const requestList = document.getElementById('requestList');
+      const message = document.getElementById('listMessage');
+      try {
+        const response = await fetch('/api/requests');
+        if (!response.ok) throw new Error('İstek başarısız.');
+        const requests = await response.json();
+        if (!Array.isArray(requests)) throw new Error('Geçersiz cevap.');
+        const cards = document.createDocumentFragment();
+        requests.forEach((request) => {
+          const card = document.createElement('article');
+          card.className = 'card request-card';
+          const number = document.createElement('p');
+          number.className = 'request-number';
+          number.textContent = `TALEP #${request.id}`;
+          const title = document.createElement('h3');
+          title.textContent = request.request_type || 'Servis talebi';
+          const details = document.createElement('dl');
+          details.className = 'request-details';
+          [['Ad Soyad', request.full_name], ['Telefon', request.phone], ['Açıklama', request.description || 'Açıklama yok']].forEach(([label, value]) => {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const description = document.createElement('dd');
+            description.textContent = value ?? 'Belirtilmemiş';
+            details.append(term, description);
+          });
+          card.append(number, title, details);
+          cards.appendChild(card);
+        });
+        requestList.replaceChildren(cards);
+        message.textContent = requests.length ? `${requests.length} servis talebi gösteriliyor.` : 'Henüz servis talebi bulunmuyor.';
+        message.className = requests.length ? 'sr-only' : 'message';
+      } catch (error) {
+        message.className = 'message message-error';
+        message.textContent = 'Talepler yüklenirken hata oluştu. Lütfen daha sonra yeniden deneyin.';
+      } finally {
+        requestList.setAttribute('aria-busy', 'false');
+      }
+    }
+    loadRequests();
+  </script>
+</body>
+</html>
