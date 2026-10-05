@@ -1,0 +1,54 @@
+services:
+  # 1. Metrik Toplayıcı: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kale-prometheus
+    restart: unless-stopped
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  # 2. Sunucu Donanım Ajanı: Node Exporter
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: kale-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+
+  # 3. Log Deposu: Loki
+  loki:
+    image: grafana/loki:latest
+    container_name: kale-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+
+  # 4. Görselleştirme Ekranı: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: kale-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+      - loki
+  alloy:
+    image: grafana/alloy:latest
+    container_name: kale-alloy
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      - ../monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ../app/logs:/var/log/app:ro
+    ports:
+      - "12345:12345"
+    depends_on:
+      - loki
