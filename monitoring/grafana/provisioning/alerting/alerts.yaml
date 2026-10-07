@@ -1,0 +1,123 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: KaleProductionAlerts
+    folder: SystemAlerts
+    interval: 10s
+    rules:
+      # 1. APPLICATION DOWN
+      - uid: alert-app-down
+        title: "Application DOWN"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: up{job="kale-app"}
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: eq
+                    params: [0]
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Uygulama çöktü veya ulaşılamıyor!"
+          description: "kale-app servisi 30 saniyedir yanıt vermiyor."
+
+      # 2. CPU > %80
+      - uid: alert-cpu-high
+        title: "CPU Usage > 80%"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [80]
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Yüksek CPU Kullanımı!"
+          description: "Sistem CPU kullanımı son 1 dakikadır %80 eşiğinin üzerinde."
+
+      # 3. DISK > %85
+      - uid: alert-disk-high
+        title: "Disk Usage > 85%"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: 100 - ((node_filesystem_avail_bytes{mountpoint="/"} * 100) / node_filesystem_size_bytes{mountpoint="/"})
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kritik Disk Doluluğu!"
+          description: "Kök dizin (/) disk doluluk oranı %85 üzerinde."
+
+      # 4. HTTP 500 > %5
+      - uid: alert-http-500-rate
+        title: "HTTP 500 Error Rate > 5%"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: (sum(rate(http_requests_total{status=~"5.."}[1m])) or vector(0)) / (sum(rate(http_requests_total[1m])) > 0) * 100
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5]
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Yüksek HTTP 500 Hata Oranı!"
+          description: "Gelen isteklerin %5'inden fazlası son 1 dakikadır 500 hatası alıyor."
