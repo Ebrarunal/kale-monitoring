@@ -5,18 +5,31 @@ services:
     container_name: kale-prometheus
     restart: unless-stopped
     volumes:
-      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+    networks:
+      - kale-net
 
-  # 2. Sunucu Donanım Ajanı: Node Exporter
+  # 2. Sunucu ve Sistem Metrikleri: Node Exporter
   node-exporter:
     image: prom/node-exporter:latest
     container_name: kale-node-exporter
     restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
     ports:
       - "9100:9100"
+    networks:
+      - kale-net
 
   # 3. Log Deposu: Loki
   loki:
@@ -25,8 +38,10 @@ services:
     restart: unless-stopped
     ports:
       - "3100:3100"
+    networks:
+      - kale-net
 
-  # 4. Görselleştirme Ekranı: Grafana
+  # 4. Görselleştirme: Grafana
   grafana:
     image: grafana/grafana:latest
     container_name: kale-grafana
@@ -39,9 +54,14 @@ services:
       - grafana-data:/var/lib/grafana
       - ../monitoring/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
       - ../monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
       - loki
+    networks:
+      - kale-net
+
+  # 5. Log Ajanı: Grafana Alloy
   alloy:
     image: grafana/alloy:latest
     container_name: kale-alloy
@@ -57,13 +77,56 @@ services:
       - "12345:12345"
     depends_on:
       - loki
+    networks:
+      - kale-net
+
+  # 6. Veritabanı: MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: kale-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: kale_db
+      MYSQL_USER: kale_user
+      MYSQL_PASSWORD: kale_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "kale_user", "-pkale_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - kale-net
+
+  # 7. Web Uygulaması: Kale App
   kale-app:
     build: ../app
     container_name: kale-app
+    restart: unless-stopped
     ports:
       - "3001:3000"
+    environment:
+      DB_HOST: mysql
+      DB_USER: kale_user
+      DB_PASSWORD: kale_password
+      DB_NAME: kale_db
+      PORT: 3000
     volumes:
       - ../app/logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - kale-net
+
+networks:
+  kale-net:
+    driver: bridge
+
 volumes:
   grafana-data:
   prometheus-data:
+  mysql-data:
