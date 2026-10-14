@@ -92,6 +92,7 @@ services:
       MYSQL_PASSWORD: kale_password
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "kale_user", "-pkale_password"]
       interval: 5s
@@ -126,7 +127,7 @@ services:
     image: prom/mysqld-exporter:latest
     container_name: kale-mysqld-exporter
     environment:
-      - DATA_SOURCE_NAME="exporter:exporter_password@(kale-mysql:3306)/"
+      - DATA_SOURCE_NAME=exporter:exporter_password@(kale-mysql:3306)/
     command:
       - "--mysqld.address=kale-mysql:3306"
       - "--mysqld.username=exporter:exporter_password"
