@@ -115,11 +115,16 @@ services:
       DB_PASSWORD: kale_password
       DB_NAME: kale_db
       PORT: 3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - ../app/logs:/app/logs
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+	condition: service_healthy
     networks:
       - kale-net
   #8
