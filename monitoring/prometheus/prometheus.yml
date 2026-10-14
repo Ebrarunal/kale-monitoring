@@ -19,3 +19,7 @@ scrape_configs:
   - job_name: 'mysql'
     static_configs:
       - targets: ['kale-mysqld-exporter:9104']
+  #redis
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
