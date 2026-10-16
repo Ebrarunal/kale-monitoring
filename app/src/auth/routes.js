@@ -8,6 +8,7 @@ const {
   validatePasswordPolicy
 } = require('./password');
 const users = require('./users');
+const { requireAuth } = require('./middleware');
 const {
   regenerateSession,
   saveSession,
@@ -20,15 +21,12 @@ const GENERIC_LOGIN_ERROR = 'E-posta veya sifre hatali.';
 
 // Yollar tam haliyle tanimlanir (router mount edilmez); boylece istek log'u ve
 // metrikler /api/auth/login gibi gercek yolu gorur.
+// JSON zorunlulugu merkezi olarak uygulanir (middleware.js: requireJsonForStaffWrites).
 const router = express.Router();
 
-// HTML formlari JSON gonderemez; bu kontrol sameSite cookie ile birlikte CSRF'i zorlastirir.
-function requireJson(req, res, next) {
-  if (!/^application\/json\b/i.test(req.get('content-type') || '')) {
-    return res.status(415).json({ error: 'Istek govdesi application/json olmalidir.' });
-  }
-  return next();
-}
+// /me ve sifre degistirme: gecerli oturum ve aktif hesap ister,
+// sadece zorunlu sifre degistirme engelinden muaftir.
+const requireAuthAllowingPasswordChange = requireAuth({ allowPasswordChangeRequired: true });
 
 function isPasswordInput(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_PASSWORD_INPUT_LENGTH;
@@ -44,7 +42,7 @@ async function endSession(req, res) {
   clearSessionCookie(res);
 }
 
-router.post('/api/auth/login', requireJson, async (req, res, next) => {
+router.post('/api/auth/login', async (req, res, next) => {
   try {
     const { email: rawEmail, password } = req.body ?? {};
     const email = normalizeEmail(rawEmail);
@@ -91,7 +89,7 @@ router.post('/api/auth/login', requireJson, async (req, res, next) => {
   }
 });
 
-router.post('/api/auth/logout', requireJson, async (req, res, next) => {
+router.post('/api/auth/logout', async (req, res, next) => {
   try {
     const { userId } = req.session;
     if (userId) {
@@ -106,33 +104,16 @@ router.post('/api/auth/logout', requireJson, async (req, res, next) => {
   }
 });
 
-router.get('/api/auth/me', async (req, res, next) => {
-  try {
-    const { userId } = req.session;
-    if (!userId) {
-      return res.status(401).json({ error: 'Oturum acilmamis.' });
-    }
-
-    // Bilgi her seferinde veritabanindan okunur: pasif yapilan kullanici hemen disari atilir.
-    const user = await users.findUserById(userId);
-    if (!user || !user.is_active) {
-      await endSession(req, res);
-      writeLog('INFO', `Oturum sonlandirildi: userId=${userId} neden=${user ? 'INACTIVE' : 'USER_NOT_FOUND'}`);
-      return res.status(401).json({ error: 'Oturum acilmamis.' });
-    }
-
-    return res.json({ user: users.toPublicUser(user) });
-  } catch (err) {
-    return next(err);
-  }
+// Arayuz bu endpoint'i "giris yapmis miyim?" diye sik cagirir; oturumsuz cagri loglanmaz.
+router.get('/api/auth/me', requireAuth({ allowPasswordChangeRequired: true, logUnauthenticated: false }), (req, res) => {
+  return res.json({ user: users.toPublicUser(req.user) });
 });
 
-router.post('/api/auth/change-password', requireJson, async (req, res, next) => {
+router.post('/api/auth/change-password', requireAuthAllowingPasswordChange, async (req, res, next) => {
   try {
-    const { userId, loginAt } = req.session;
-    if (!userId) {
-      return res.status(401).json({ error: 'Oturum acilmamis.' });
-    }
+    const user = req.user;
+    const userId = user.id;
+    const { loginAt } = req.session;
 
     const { currentPassword, newPassword } = req.body ?? {};
     if (!isPasswordInput(currentPassword) || typeof newPassword !== 'string') {
@@ -145,13 +126,6 @@ router.post('/api/auth/change-password', requireJson, async (req, res, next) => 
     }
     if (newPassword === currentPassword) {
       return res.status(400).json({ error: 'Yeni sifre mevcut sifreden farkli olmalidir.' });
-    }
-
-    const user = await users.findUserById(userId);
-    if (!user || !user.is_active) {
-      await endSession(req, res);
-      writeLog('INFO', `Oturum sonlandirildi: userId=${userId} neden=${user ? 'INACTIVE' : 'USER_NOT_FOUND'}`);
-      return res.status(401).json({ error: 'Oturum acilmamis.' });
     }
 
     if (!(await verifyPassword(user.password_hash, currentPassword))) {

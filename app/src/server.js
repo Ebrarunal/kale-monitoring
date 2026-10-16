@@ -7,6 +7,9 @@ const { pingRedis } = require('./redis');
 const { createStaffSessionMiddleware, sessionErrorHandler } = require('./session');
 const { withTimeout } = require('./timeout');
 const authRoutes = require('./auth/routes');
+const staffRoutes = require('./staff/routes');
+const { requireJsonForStaffWrites, requireTrustedOriginForStaffWrites } = require('./auth/middleware');
+const { validateServiceRequest } = require('./requests/validate');
 
 const client = require('prom-client');
 
@@ -73,9 +76,13 @@ app.use((req, res, next) => {
 app.use(express.static('public'));
 
 // Sadece personel yollarinda (/api/auth, /api/staff) calisir; musteri talepleri Redis'e bagli degildir.
+// Session'dan once: kurala uymayan istek Redis'e hic ugramadan reddedilir.
+app.use(requireJsonForStaffWrites);
+app.use(requireTrustedOriginForStaffWrites);
 app.use(createStaffSessionMiddleware());
 
 app.use(authRoutes);
+app.use(staffRoutes);
 
 client.collectDefaultMetrics();
 
@@ -187,8 +194,17 @@ app.get('/api/requests', async (req, res) => {
 });
 
 app.post('/api/requests', async (req, res) => {
+  const { value, invalidFields } = validateServiceRequest(req.body);
+  if (invalidFields) {
+    writeLog('INFO', `Talep reddedildi: neden=VALIDATION alanlar=${invalidFields.join(',')}`);
+    return res.status(400).json({
+      error: 'Eksik veya hatali alanlar var.',
+      fields: invalidFields
+    });
+  }
+
   try {
-    const { full_name, phone, request_type, description } = req.body;
+    const { full_name, phone, request_type, description } = value;
 
     const [result] = await db.query(
       `INSERT INTO service_requests
