@@ -109,8 +109,12 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3000"
+    environment:
+      - NODE_ENV=development
     env_file:
       - .env
+    # MySQL hazır olduktan sonra sırasıyla migration -> seed -> server çalışmalı:
+    command: sh -c "npm run migrate && npm run seed && node src/server.js"
     volumes:
       - ../app/logs:/app/logs
     depends_on:
@@ -167,6 +171,8 @@ services:
     environment:
       - REDIS_ADDR=redis://${REDIS_HOST}:${REDIS_PORT}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "9121:9121"
     networks:
       - kale-net
     depends_on:
