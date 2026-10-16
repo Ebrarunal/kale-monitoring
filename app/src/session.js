@@ -7,6 +7,14 @@ const { writeLog } = require('./logger');
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const MIN_SECRET_LENGTH = 32;
 
+const SESSION_COOKIE_NAME = 'kale.sid';
+const COOKIE_OPTIONS = {
+  path: '/',
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production'
+};
+
 // Session SADECE bu yollarda calisir. Herkese acik sayfalar ve musteri talep API'si
 // Redis'e hic dokunmaz; Redis kesilse de talep almaya devam eder.
 const STAFF_PATH_PREFIXES = ['/api/auth', '/api/staff'];
@@ -56,19 +64,14 @@ function createStaffSessionMiddleware() {
   }
 
   const sessionMiddleware = session({
-    name: 'kale.sid',
+    name: SESSION_COOKIE_NAME,
     store: new RedisStore({ client: boundedSessionClient, prefix: 'sess:' }),
     secret,
     resave: false,
     // Giris yapmayan ziyaretciler icin Redis'te kayit acilmaz.
     saveUninitialized: false,
     rolling: true,
-    cookie: {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: IDLE_TIMEOUT_MS
-    }
+    cookie: { ...COOKIE_OPTIONS, maxAge: IDLE_TIMEOUT_MS }
   });
 
   return function staffSession(req, res, next) {
@@ -92,10 +95,33 @@ function sessionErrorHandler(err, req, res, next) {
   return sendSessionUnavailable(res);
 }
 
+// express-session'in callback tabanli metodlarinin promise halleri.
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
+}
+
+function saveSession(req) {
+  return new Promise((resolve, reject) => req.session.save((err) => (err ? reject(err) : resolve())));
+}
+
+function destroySession(req) {
+  return new Promise((resolve, reject) => req.session.destroy((err) => (err ? reject(err) : resolve())));
+}
+
+// Cookie, olusturulurken kullanilan ayarlarla silinmelidir; aksi halde tarayici silmez.
+function clearSessionCookie(res) {
+  res.clearCookie(SESSION_COOKIE_NAME, COOKIE_OPTIONS);
+}
+
 module.exports = {
   createStaffSessionMiddleware,
   sessionErrorHandler,
   isStaffPath,
+  regenerateSession,
+  saveSession,
+  destroySession,
+  clearSessionCookie,
+  SESSION_COOKIE_NAME,
   IDLE_TIMEOUT_MS,
   STAFF_PATH_PREFIXES
 };

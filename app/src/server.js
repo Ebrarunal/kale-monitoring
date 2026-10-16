@@ -6,6 +6,7 @@ const { writeLog } = require('./logger');
 const { pingRedis } = require('./redis');
 const { createStaffSessionMiddleware, sessionErrorHandler } = require('./session');
 const { withTimeout } = require('./timeout');
+const authRoutes = require('./auth/routes');
 
 const client = require('prom-client');
 
@@ -73,6 +74,8 @@ app.use(express.static('public'));
 
 // Sadece personel yollarinda (/api/auth, /api/staff) calisir; musteri talepleri Redis'e bagli degildir.
 app.use(createStaffSessionMiddleware());
+
+app.use(authRoutes);
 
 client.collectDefaultMetrics();
 
@@ -220,6 +223,22 @@ app.get('/metrics', async (req, res) => {
 
 // Tum route'lardan sonra: session deposu hatalarini 503'e cevirir, digerlerini Express'e birakir.
 app.use(sessionErrorHandler);
+
+// Son hata yakalayici: bozuk JSON icin 400, digerleri icin 500 doner.
+// Hata ayrintisi (stack trace) kullaniciya gosterilmez, sadece log'a yazilir.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Istek govdesi gecerli bir JSON degil.' });
+  }
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: 'Gecersiz istek.' });
+  }
+
+  writeLog('ERROR', `Beklenmeyen hata: ${req.method} ${req.path} ${err.message}`);
+  return res.status(500).json({ error: 'Beklenmeyen bir hata olustu.' });
+});
 
 app.listen(PORT, () => {
   console.log(`Server http://localhost:${PORT} adresinde calisiyor.`);
