@@ -49,7 +49,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ../monitoring/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
@@ -86,14 +86,15 @@ services:
     container_name: kale-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: kale_db
-      MYSQL_USER: kale_user
-      MYSQL_PASSWORD: kale_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "kale_user", "-pkale_password"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -108,42 +109,42 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3000"
-    environment:
-      DB_HOST: mysql
-      DB_USER: kale_user
-      DB_PASSWORD: kale_password
-      DB_NAME: kale_db
-      PORT: 3000
+    env_file:
+      - .env
     volumes:
       - ../app/logs:/app/logs
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - kale-net
-  #8
+
+  # 8. MySQL Metrik Toplayıcı
   mysqld-exporter:
     image: prom/mysqld-exporter:latest
     container_name: kale-mysqld-exporter
+    restart: unless-stopped
     environment:
-      - DATA_SOURCE_NAME="exporter:exporter_password@(kale-mysql:3306)/"
-    command:
-      - "--mysqld.address=kale-mysql:3306"
-      - "--mysqld.username=exporter:exporter_password"
+      - DATA_SOURCE_NAME=${MYSQL_EXPORTER_USER}:${MYSQL_EXPORTER_PASSWORD}@(mysql:3306)/
     ports:
       - "9104:9104"
+    depends_on:
+      mysql:
+        condition: service_healthy
     networks:
       - kale-net
-    restart: unless-stopped
-  #9
+
+  # 9. Önbellek: Redis
   redis:
     image: redis:7-alpine
     container_name: kale-redis
     restart: unless-stopped
     command: >
-      redis-server 
+      redis-server
       --requirepass ${REDIS_PASSWORD}
-      --maxmemory 256mb 
+      --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --appendonly yes
     ports:
@@ -158,18 +159,20 @@ services:
       timeout: 3s
       retries: 5
 
+  # 10. Redis Metrik Toplayıcı
   redis-exporter:
     image: oliver006/redis_exporter:v1.67.0-alpine
     container_name: kale-redis-exporter
     restart: unless-stopped
     environment:
-      - REDIS_ADDR=redis://redis:6379
+      - REDIS_ADDR=redis://${REDIS_HOST}:${REDIS_PORT}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - kale-net
     depends_on:
       redis:
         condition: service_healthy
+
 networks:
   kale-net:
     driver: bridge
