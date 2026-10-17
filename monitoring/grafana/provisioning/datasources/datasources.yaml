@@ -8,7 +8,9 @@ datasources:
     isDefault: true
     uid: prometheus
     editable: true
-
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
   - name: Loki
     type: loki
     access: proxy

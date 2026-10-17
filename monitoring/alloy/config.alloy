@@ -3,13 +3,48 @@ local.file_match "app_logs" {
   path_targets = [{"__path__" = "/var/log/app/application.log", "job" = "kale-service"}]
 }
 
-// 2. Dosyadaki satırları canlı olarak oku (tail et)
+// 2. Dosyadaki satırları canlı olarak oku ve İŞLEYİCİYE (loki.process) yönlendir
 loki.source.file "log_scrape" {
   targets    = local.file_match.app_logs.targets
-  forward_to = [loki.write.endpoint.receiver]
+  forward_to = [loki.process.log_processor.receiver]
 }
 
-// 3. Okunan logları Loki konteynerine POST et
+// 3. Logları işle, ayrıştır ve etiketle
+loki.process "log_processor" {
+  forward_to = [loki.write.endpoint.receiver]
+
+  // A. Sistem / Redis Hatalarını Yakala
+  stage.regex {
+    expression = "(?P<redis_err>Redis baglanti hatasi|Session deposu hazir degil|Session deposu hatasi)"
+  }
+  stage.labels {
+    values = {
+      redis_error = "redis_err",
+    }
+  }
+
+  // B. Başarısız Giriş Nedenini Ayıkla (Login basarisiz: neden=...)
+  stage.regex {
+    expression = "Login basarisiz: neden=(?P<auth_fail_reason>[^ ]+)"
+  }
+  stage.labels {
+    values = {
+      auth_failure = "auth_fail_reason",
+    }
+  }
+
+  // C. Yetki Aşımı Taramalarını Ayıkla (Yetkisiz erisim: neden=...)
+  stage.regex {
+    expression = "Yetkisiz erisim: neden=(?P<authz_deny_reason>[^ ]+)"
+  }
+  stage.labels {
+    values = {
+      forbidden_access = "authz_deny_reason",
+    }
+  }
+}
+
+// 4. İşlenmiş ve etiketlenmiş logları Loki konteynerine POST et
 loki.write "endpoint" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
