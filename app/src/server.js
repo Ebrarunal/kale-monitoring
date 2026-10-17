@@ -2,10 +2,17 @@ const express = require('express');
 require('dotenv').config();
 
 const db = require('./db');
+const { writeLog } = require('./logger');
+const { pingRedis } = require('./redis');
+const { createStaffSessionMiddleware, sessionErrorHandler } = require('./session');
+const { withTimeout } = require('./timeout');
+const authRoutes = require('./auth/routes');
+const staffRoutes = require('./staff/routes');
+const { requireJsonForStaffWrites, requireTrustedOriginForStaffWrites } = require('./auth/middleware');
+const { validateServiceRequest } = require('./requests/validate');
 
 const client = require('prom-client');
 
-const fs = require('fs');
 const path = require('path');
 
 const app = express();
@@ -68,14 +75,36 @@ app.use((req, res, next) => {
 
 app.use(express.static('public'));
 
+// Sadece personel yollarinda (/api/auth, /api/staff) calisir; musteri talepleri Redis'e bagli degildir.
+// Session'dan once: kurala uymayan istek Redis'e hic ugramadan reddedilir.
+app.use(requireJsonForStaffWrites);
+app.use(requireTrustedOriginForStaffWrites);
+app.use(createStaffSessionMiddleware());
+
+app.use(authRoutes);
+app.use(staffRoutes);
+
 client.collectDefaultMetrics();
 
-function writeLog(level, message) {
-  const logLine = `${new Date().toISOString()} [${level}] ${message}\n`;
+const HEALTH_CHECK_TIMEOUT_MS = 2000;
 
-  const logPath = path.join(__dirname, '..', 'logs', 'application.log');
+async function checkDatabase() {
+  try {
+    await withTimeout(() => db.query('SELECT 1'), HEALTH_CHECK_TIMEOUT_MS, 'MySQL');
+    return 'UP';
+  } catch (err) {
+    writeLog('ERROR', `Database connection failed: ${err.message}`);
+    return 'DOWN';
+  }
+}
 
-  fs.appendFileSync(logPath, logLine);
+async function checkRedis() {
+  try {
+    await pingRedis();
+    return 'UP';
+  } catch {
+    return 'DOWN';
+  }
 }
 
 const PORT = process.env.PORT || 3000;
@@ -100,43 +129,40 @@ app.get('/status', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'status.html'));
 });
 
-app.get('/health', async (req, res) => {
-  try {
-    await db.query('SELECT 1');
-
-    res.json({
-      status: 'UP',
-      database: 'UP',
-      uptime: process.uptime()
-    });
-  } catch (err) {
-  writeLog('ERROR', `Database connection failed: ${err.message}`);
-
-  res.status(503).json({
-    status: 'DEGRADED',
-    database: 'DOWN',
+// Liveness: sadece surecin ayakta oldugunu soyler, bagimliliklara bakmaz.
+// Redis/MySQL kesintisinde container'in gereksiz yere yeniden baslatilmasini onler.
+app.get('/health/live', (req, res) => {
+  res.json({
+    status: 'UP',
     uptime: process.uptime()
+  });
 });
-}});
+
+// Bagimlilik durumu (izleme/alarm icin): biri DOWN ise 503 doner.
+app.get('/health', async (req, res) => {
+  const [database, redis] = await Promise.all([checkDatabase(), checkRedis()]);
+  const healthy = database === 'UP' && redis === 'UP';
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'UP' : 'DEGRADED',
+    database,
+    redis,
+    uptime: process.uptime()
+  });
+});
 
 app.get('/api/status', async (req, res) => {
-  let database = 'UP';
-
-  try {
-    await db.query('SELECT 1');
-  } catch (err) {
-    database = 'DOWN';
-    writeLog('ERROR', `Database connection failed: ${err.message}`);
-  }
+  const [database, redis] = await Promise.all([checkDatabase(), checkRedis()]);
 
   const errorRate = requestStats.total
     ? (requestStats.errors / requestStats.total) * 100
     : 0;
 
-  res.status(database === 'UP' ? 200 : 503).json({
+  res.status(database === 'UP' && redis === 'UP' ? 200 : 503).json({
     application: 'UP',
     api: 'UP',
     database,
+    redis,
     uptime: process.uptime(),
     requests: requestStats.total,
     errors: requestStats.errors,
@@ -168,8 +194,17 @@ app.get('/api/requests', async (req, res) => {
 });
 
 app.post('/api/requests', async (req, res) => {
+  const { value, invalidFields } = validateServiceRequest(req.body);
+  if (invalidFields) {
+    writeLog('INFO', `Talep reddedildi: neden=VALIDATION alanlar=${invalidFields.join(',')}`);
+    return res.status(400).json({
+      error: 'Eksik veya hatali alanlar var.',
+      fields: invalidFields
+    });
+  }
+
   try {
-    const { full_name, phone, request_type, description } = req.body;
+    const { full_name, phone, request_type, description } = value;
 
     const [result] = await db.query(
       `INSERT INTO service_requests
@@ -200,6 +235,25 @@ writeLog(
 app.get('/metrics', async (req, res) => {
   res.set('Content-Type', client.register.contentType);
   res.end(await client.register.metrics());
+});
+
+// Tum route'lardan sonra: session deposu hatalarini 503'e cevirir, digerlerini Express'e birakir.
+app.use(sessionErrorHandler);
+
+// Son hata yakalayici: bozuk JSON icin 400, digerleri icin 500 doner.
+// Hata ayrintisi (stack trace) kullaniciya gosterilmez, sadece log'a yazilir.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Istek govdesi gecerli bir JSON degil.' });
+  }
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: 'Gecersiz istek.' });
+  }
+
+  writeLog('ERROR', `Beklenmeyen hata: ${req.method} ${req.path} ${err.message}`);
+  return res.status(500).json({ error: 'Beklenmeyen bir hata olustu.' });
 });
 
 app.listen(PORT, () => {

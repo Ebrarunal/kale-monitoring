@@ -1,6 +1,5 @@
 const { hashPassword, validatePasswordPolicy } = require('../src/auth/password');
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const { normalizeEmail, isValidEmail } = require('../src/auth/email');
 
 // Sistemde hic admin yoksa env'deki bilgilerle ilk admini olusturur.
 // Tekrar calistirilabilir: admin varsa hicbir sey yapmaz, mevcut kullanicilari asla silmez.
@@ -11,11 +10,11 @@ exports.seed = async function (knex) {
     return;
   }
 
-  const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const email = normalizeEmail(process.env.ADMIN_EMAIL);
   const password = process.env.ADMIN_PASSWORD || '';
   const fullName = (process.env.ADMIN_FULL_NAME || '').trim();
 
-  if (!EMAIL_REGEX.test(email) || !fullName) {
+  if (!isValidEmail(email) || !fullName) {
     throw new Error('ADMIN_EMAIL ve ADMIN_FULL_NAME gecerli sekilde tanimlanmalidir.');
   }
 
